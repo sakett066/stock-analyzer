@@ -1,51 +1,163 @@
 """
-MULTI-BAGGER STOCK SCANNER - Production Version
-Nifty 50 + Next 50 + Midcap Stocks
-Strategy: Value + Momentum + Smart Money + News
+██████╗ ██████╗  ██████╗     ████████╗██████╗  █████╗ ██████╗ ███████╗██████╗ 
+██╔══██╗██╔══██╗██╔═══██╗    ╚══██╔══╝██╔══██╗██╔══██╗██╔══██╗██╔════╝██╔══██╗
+██████╔╝██████╔╝██║   ██║       ██║   ██████╔╝███████║██║  ██║█████╗  ██████╔╝
+██╔═══╝ ██╔══██╗██║   ██║       ██║   ██╔══██╗██╔══██║██║  ██║██╔══╝  ██╔══██╗
+██║     ██║  ██║╚██████╔╝       ██║   ██║  ██║██║  ██║██████╔╝███████╗██║  ██║
+╚═╝     ╚═╝  ╚═╝ ╚═════╝        ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝
+PROFESSIONAL TRADING SYSTEM v3.0
+Entry + Exit + Position Sizing + Trailing Stop + Market Regime + Backtest
 """
 import os
 import time
 import requests
 from nsetools import Nse
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 from xml.etree import ElementTree
 
-# Set India Timezone
 os.environ['TZ'] = 'Asia/Kolkata'
 
-# ============================================
-# CONFIGURATION
-# ============================================
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 
 STOCKS = {
-    '🖥️ IT': ['TCS', 'INFY', 'WIPRO', 'HCLTECH', 'TECHM', 'PERSISTENT', 'LTI'],
-    '🏦 Banking': ['HDFCBANK', 'ICICIBANK', 'KOTAKBANK', 'SBIN', 'AXISBANK', 
-                   'BANDHANBNK', 'FEDERALBNK', 'IDFCFIRSTB'],
-    '🏗️ Infra': ['LT', 'ADANIPORTS', 'HAL', 'BEL', 'IRCON'],
-    '🏭 Industry': ['RELIANCE', 'TATASTEEL', 'JSWSTEEL', 'ADANIENT'],
-    '💊 Pharma': ['SUNPHARMA', 'DRREDDY', 'CIPLA', 'DIVISLAB', 'LAURUSLABS', 'BIOCON'],
-    '🛒 Consumer': ['ITC', 'HINDUNILVR', 'TITAN', 'DMART', 'TRENT', 'TATACONSUM'],
-    '🚗 Auto': ['MARUTI', 'TATAMOTORS', 'BAJAJ-AUTO', 'M&M', 'EICHERMOT'],
-    '⚡ Energy': ['POWERGRID', 'NTPC', 'ONGC', 'TATAPOWER', 'NHPC'],
-    '💰 Finance': ['BAJFINANCE', 'BAJAJFINSV', 'CHOLAFIN', 'MUTHOOTFIN'],
-    '🔧 Others': ['ASIANPAINT', 'PIDILITIND', 'IRCTC', 'ZOMATO']
+    '🖥️ IT': ['TCS', 'INFY', 'WIPRO', 'HCLTECH', 'TECHM'],
+    '🏦 Banking': ['HDFCBANK', 'ICICIBANK', 'KOTAKBANK', 'SBIN', 'AXISBANK'],
+    '🏗️ Infra': ['LT', 'ADANIPORTS', 'HAL', 'BEL'],
+    '🏭 Industry': ['RELIANCE', 'TATASTEEL', 'JSWSTEEL'],
+    '💊 Pharma': ['SUNPHARMA', 'DRREDDY', 'CIPLA', 'DIVISLAB'],
+    '🛒 Consumer': ['ITC', 'HINDUNILVR', 'TITAN', 'DMART', 'TRENT'],
+    '🚗 Auto': ['MARUTI', 'TATAMOTORS', 'M&M'],
+    '⚡ Energy': ['POWERGRID', 'NTPC', 'ONGC', 'TATAPOWER'],
+    '💰 Finance': ['BAJFINANCE', 'BAJAJFINSV', 'CHOLAFIN'],
+    '🔧 Others': ['ASIANPAINT', 'PIDILITIND', 'IRCTC']
 }
+
+# ============================================
+# MARKET REGIME DETECTOR
+# ============================================
+def get_market_regime():
+    """Detect Bull/Bear/Neutral market"""
+    try:
+        nse = Nse()
+        q = nse.get_quote('NIFTY 50')
+        if not q:
+            q = nse.get_quote('RELIANCE')
+        
+        price = float(q.get('lastPrice', 0))
+        weekly = q.get('weekHighLow', {})
+        high_52 = float(weekly.get('max', 0))
+        low_52 = float(weekly.get('min', 0))
+        
+        if high_52 > 0:
+            dist_from_high = ((high_52 - price) / high_52) * 100
+            
+            if dist_from_high < 5:
+                return '🟢 BULL MARKET', 1.0
+            elif dist_from_high < 15:
+                return '🔵 MODERATE BULL', 0.8
+            elif dist_from_high < 30:
+                return '🟡 NEUTRAL', 0.6
+            elif dist_from_high < 45:
+                return '🟠 BEAR MARKET', 0.4
+            else:
+                return '🔴 DEEP BEAR', 0.2
+    except:
+        pass
+    return '🟡 NEUTRAL', 0.6
+
+# ============================================
+# POSITION SIZE CALCULATOR
+# ============================================
+def calculate_position(capital, entry, stop_loss, risk_percent=2):
+    """Calculate exact position size"""
+    risk_amount = capital * (risk_percent / 100)
+    risk_per_share = abs(entry - stop_loss)
+    
+    if risk_per_share == 0:
+        return 0, 0
+    
+    quantity = int(risk_amount / risk_per_share)
+    investment = quantity * entry
+    
+    # Max 20% in one stock
+    max_investment = capital * 0.20
+    if investment > max_investment:
+        quantity = int(max_investment / entry)
+        investment = quantity * entry
+    
+    return quantity, investment
+
+# ============================================
+# TRAILING STOP LOSS
+# ============================================
+def calculate_trailing_stop(entry, current, highest, stage):
+    """Dynamic trailing stop loss"""
+    profit_pct = ((current - entry) / entry) * 100
+    
+    if profit_pct < 5:
+        return entry * 0.95  # Initial stop: -5%
+    elif profit_pct < 10:
+        return entry  # Breakeven
+    elif profit_pct < 20:
+        return current * 0.95  # Trail 5%
+    elif profit_pct < 35:
+        return current * 0.92  # Trail 8%
+    elif profit_pct < 50:
+        return current * 0.90  # Trail 10%
+    else:
+        return current * 0.85  # Trail 15% (let it run)
+
+# ============================================
+# EXIT STRATEGY
+# ============================================
+def get_exit_strategy(score, entry, target):
+    """Generate exit plan"""
+    strategies = {
+        80: {
+            'first_exit': 'Book 30% at +25%',
+            'second_exit': 'Book 40% at +50%',
+            'final_exit': 'Trail 25% on remaining',
+            'stop': 'Initial -5%, then trail'
+        },
+        65: {
+            'first_exit': 'Book 40% at +20%',
+            'second_exit': 'Book 40% at +40%',
+            'final_exit': 'Exit balance at +60%',
+            'stop': 'Initial -5%, breakeven at +8%'
+        },
+        55: {
+            'first_exit': 'Book 50% at +15%',
+            'second_exit': 'Exit balance at +25%',
+            'final_exit': 'N/A',
+            'stop': 'Strict -4% stop loss'
+        },
+        40: {
+            'first_exit': 'Exit 100% at +10%',
+            'second_exit': 'N/A',
+            'final_exit': 'N/A',
+            'stop': 'Strict -3% stop loss'
+        }
+    }
+    
+    for threshold, strategy in strategies.items():
+        if score >= threshold:
+            return strategy
+    
+    return strategies[40]
 
 # ============================================
 # MARKET CONTEXT
 # ============================================
 def get_market_context():
-    """Get FII/DII + Options data"""
+    """FII/DII + Options + Nifty"""
     context = {}
     try:
         session = requests.Session()
         session.headers.update({'User-Agent': 'Mozilla/5.0'})
         session.get("https://www.nseindia.com", timeout=5)
         
-        # FII/DII
         try:
             resp = session.get("https://www.nseindia.com/api/fii-dii-activity", timeout=8)
             if resp.status_code == 200:
@@ -57,10 +169,8 @@ def get_market_context():
                     context['fii'] = f"🌍 FII: {'🟢 +' if fii > 0 else '🔴 '}{fii:.0f} Cr"
                     context['dii'] = f"🏠 DII: {'🟢 +' if dii > 0 else '🔴 '}{dii:.0f} Cr"
         except:
-            context['fii'] = "🌍 FII: Data N/A"
-            context['dii'] = "🏠 DII: Data N/A"
+            pass
         
-        # PCR
         try:
             resp = session.get("https://www.nseindia.com/api/option-chain-indices?symbol=NIFTY", timeout=8)
             if resp.status_code == 200:
@@ -71,30 +181,24 @@ def get_market_context():
                 if call_oi > 0:
                     pcr = put_oi / call_oi
                     signal = '🟢 Bullish' if pcr > 1.3 else '🟡 Neutral' if pcr > 0.9 else '🔴 Bearish'
-                    context['pcr'] = f"📊 Nifty PCR: {pcr:.2f} ({signal})"
+                    context['pcr'] = f"📊 PCR: {pcr:.2f} ({signal})"
         except:
-            context['pcr'] = "📊 PCR: Data N/A"
-            
+            pass
     except:
         pass
-    
     return context
 
 # ============================================
 # NEWS ANALYSIS
 # ============================================
 def get_news_analysis(symbol):
-    """Get news sentiment with crux"""
     try:
         all_news = []
-        
-        # Search with 2 different queries
         for query in [f"{symbol} stock NSE", f"{symbol} share market"]:
             try:
                 url = f"https://news.google.com/rss/search?q={query}&hl=en-IN&gl=IN&ceid=IN:en"
                 resp = requests.get(url, timeout=5)
                 root = ElementTree.fromstring(resp.content)
-                
                 for item in root.findall('.//item')[:8]:
                     title = item.find('title').text if item.find('title') is not None else ""
                     title = re.sub(r'[^\w\s\-.,%₹$&()]', '', title)
@@ -106,9 +210,7 @@ def get_news_analysis(symbol):
         if not all_news:
             return {'crux': ['📌 Limited news'], 'sentiment': '🟡 Neutral', 'score': 8}
         
-        all_news = list(set(all_news))  # Remove duplicates
-        
-        # Sentiment words
+        all_news = list(set(all_news))
         pos_words = ['profit', 'growth', 'revenue', 'rise', 'gain', 'upgrade', 'strong',
                      'record', 'boost', 'expansion', 'dividend', 'buyback', 'contract',
                      'order', 'beat', 'rally', 'surge', 'bullish', 'recovery', 'positive']
@@ -125,23 +227,15 @@ def get_news_analysis(symbol):
         
         scored.sort(key=lambda x: abs(x['score']), reverse=True)
         
-        # Create crux
-        crux = []
-        seen = set()
+        crux, seen = [], set()
         for news in scored:
             key = ' '.join(news['title'].lower().split()[:3])
             if key not in seen and len(crux) < 3:
                 seen.add(key)
-                if news['score'] > 0:
-                    crux.append(f"✅ {news['title']}")
-                elif news['score'] < 0:
-                    crux.append(f"⚠️ {news['title']}")
-                else:
-                    crux.append(f"📌 {news['title']}")
+                prefix = "✅" if news['score'] > 0 else "⚠️" if news['score'] < 0 else "📌"
+                crux.append(f"{prefix} {news['title']}")
         
-        # Overall sentiment
         avg = sum(n['score'] for n in scored) / len(scored)
-        
         if avg > 1.5: sentiment, score = '🟢 Very Positive', 14
         elif avg > 0.3: sentiment, score = '🔵 Positive', 11
         elif avg > -0.3: sentiment, score = '🟡 Neutral', 8
@@ -149,7 +243,6 @@ def get_news_analysis(symbol):
         else: sentiment, score = '🔴 Very Negative', 1
         
         return {'crux': crux if crux else ['📌 No clear direction'], 'sentiment': sentiment, 'score': score}
-        
     except:
         return {'crux': ['📌 News unavailable'], 'sentiment': '🟡 Neutral', 'score': 8}
 
@@ -159,13 +252,10 @@ def get_news_analysis(symbol):
 def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     try:
-        if len(text) > 4000:
-            parts = [text[i:i+4000] for i in range(0, len(text), 4000)]
-            for part in parts[:3]:
-                requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'text': part, 'parse_mode': 'HTML'}, timeout=10)
-                time.sleep(0.5)
-        else:
-            requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'text': text, 'parse_mode': 'HTML'}, timeout=10)
+        parts = [text[i:i+4000] for i in range(0, len(text), 4000)]
+        for part in parts[:3]:
+            requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'text': part, 'parse_mode': 'HTML'}, timeout=10)
+            time.sleep(0.5)
         return True
     except:
         return False
@@ -179,36 +269,34 @@ def analyze():
     now = datetime.now()
     ist_time = now.strftime('%I:%M %p')
     ist_date = now.strftime('%d-%b-%Y')
+    day = now.strftime('%A')
     
-    print(f"\n{'='*50}")
-    print(f"🔬 MULTI-BAGGER SCANNER - {ist_time}")
-    print(f"{'='*50}")
+    print(f"\n{'='*60}")
+    print(f"🚀 PRO TRADING SYSTEM v3.0")
+    print(f"📅 {day}, {ist_date} | ⏰ {ist_time}")
+    print(f"{'='*60}")
     
-    # Market context
-    print("📊 Getting market context...")
+    # Market Regime
+    regime, regime_multiplier = get_market_regime()
+    print(f"📊 Market Regime: {regime} (Multiplier: {regime_multiplier}x)")
+    
+    # Market Context
     market = get_market_context()
     
-    # Flatten stocks
-    all_stocks = []
-    for sector, symbols in STOCKS.items():
-        for sym in symbols:
-            all_stocks.append((sym, sector))
-    
+    all_stocks = [(sym, sec) for sec, syms in STOCKS.items() for sym in syms]
     print(f"🔄 Analyzing {len(all_stocks)} stocks...\n")
     
     for symbol, sector in all_stocks:
         try:
             q = nse.get_quote(symbol)
-            if not q:
-                continue
+            if not q: continue
             
             intraday = q.get('intraDayHighLow', {})
             weekly = q.get('weekHighLow', {})
             
             price = float(q.get('lastPrice', 0))
-            if price == 0:
-                continue
-                
+            if price == 0: continue
+            
             high = float(intraday.get('max', 0))
             low = float(intraday.get('min', 0))
             open_price = float(q.get('open', 0))
@@ -218,20 +306,14 @@ def analyze():
             low_52 = float(weekly.get('min', 0))
             prev_close = float(q.get('previousClose', 0))
             
-            # ===== SCORING =====
-            
-            # 1. VALUE & POSITION SCORE (0-35 points)
+            # SCORING
             value_score = 0
-            
             day_range = high - low
             pos = ((price - low) / day_range * 100) if day_range > 0 else 50
             
-            if 50 < pos < 80:
-                value_score += 10
-            elif 30 <= pos <= 50:
-                value_score += 7
-            elif pos < 30:
-                value_score += 8
+            if 50 < pos < 80: value_score += 10
+            elif 30 <= pos <= 50: value_score += 7
+            elif pos < 30: value_score += 8
             
             dist_high = ((high_52 - price) / high_52 * 100) if high_52 > 0 else 0
             dist_low = ((price - low_52) / low_52 * 100) if low_52 > 0 else 0
@@ -239,18 +321,14 @@ def analyze():
             if dist_high > 30: value_score += 12
             elif dist_high > 15: value_score += 10
             elif dist_high > 5: value_score += 5
-            
             if dist_low < 10: value_score += 8
             elif dist_low < 20: value_score += 5
             
             vs_vwap = ((price - vwap) / vwap * 100) if vwap > 0 else 0
             if 0 < vs_vwap < 2: value_score += 8
             elif -1 < vs_vwap <= 0: value_score += 10
-            elif vs_vwap < -2: value_score += 4
             
-            # 2. MOMENTUM SCORE (0-25 points)
             momentum_score = 0
-            
             if 1 < change_pct < 3: momentum_score += 12
             elif 0.5 < change_pct <= 1: momentum_score += 10
             elif 0 < change_pct <= 0.5: momentum_score += 8
@@ -259,113 +337,75 @@ def analyze():
             
             gap = ((open_price - prev_close) / prev_close * 100) if prev_close > 0 else 0
             if 0 < gap < 1: momentum_score += 8
-            elif gap > 1: momentum_score += 5
+            if price > vwap > 0: momentum_score += 5
             
-            if price > vwap and vwap > 0:
-                momentum_score += 5
-            
-            # 3. SMART MONEY SCORE (0-20 points)
-            smart_score = 0
-            delivery_info = ""
-            
+            smart_score, delivery_info = 0, ""
             try:
                 delivery_qty = float(q.get('deliveryQuantity', 0))
                 total_vol = float(q.get('totalTradedVolume', 1))
                 delivery_pct = (delivery_qty / total_vol * 100) if total_vol > 0 else 0
                 
-                if delivery_pct > 65:
-                    smart_score += 18
-                    delivery_info = f"🟢 {delivery_pct:.0f}% Strong Hands"
-                elif delivery_pct > 50:
-                    smart_score += 14
-                    delivery_info = f"🔵 {delivery_pct:.0f}% Good"
-                elif delivery_pct > 40:
-                    smart_score += 10
-                    delivery_info = f"🟡 {delivery_pct:.0f}% Avg"
-                elif delivery_pct > 25:
-                    smart_score += 5
-                    delivery_info = f"🟠 {delivery_pct:.0f}% Low"
-                else:
-                    delivery_info = f"🔴 {delivery_pct:.0f}% Speculative"
+                if delivery_pct > 65: smart_score, delivery_info = 18, f"🟢 {delivery_pct:.0f}% Strong"
+                elif delivery_pct > 50: smart_score, delivery_info = 14, f"🔵 {delivery_pct:.0f}% Good"
+                elif delivery_pct > 40: smart_score, delivery_info = 10, f"🟡 {delivery_pct:.0f}% Avg"
+                elif delivery_pct > 25: smart_score, delivery_info = 5, f"🟠 {delivery_pct:.0f}% Low"
+                else: delivery_info = f"🔴 {delivery_pct:.0f}% Weak"
             except:
-                buy_qty = float(q.get('totalBuyQuantity', 0))
-                sell_qty = float(q.get('totalSellQuantity', 0))
-                total = buy_qty + sell_qty
-                if total > 0:
-                    buy_ratio = buy_qty / total
-                    if buy_ratio > 0.6:
-                        smart_score += 12
-                        delivery_info = f"🔵 {buy_ratio:.0%} Buyers"
-                    elif buy_ratio > 0.5:
-                        smart_score += 8
-                        delivery_info = f"🟡 Balanced"
-                    else:
-                        smart_score += 4
-                        delivery_info = f"🔴 Sellers"
-                else:
-                    delivery_info = "📌 N/A"
+                delivery_info = "📌 N/A"
             
-            # 4. NEWS SENTIMENT (0-15 points)
             news = get_news_analysis(symbol)
             
-            # 5. TECHNICAL BONUS (0-5 points)
             tech_bonus = 0
+            if price > open_price and open_price > prev_close: tech_bonus += 2
+            if price > vwap > 0: tech_bonus += 1
+            if pos > 60: tech_bonus += 2
             
-            if price > open_price and open_price > prev_close:
-                tech_bonus += 2
+            # TOTAL SCORE (adjusted by market regime)
+            raw_score = value_score + momentum_score + smart_score + news['score'] + tech_bonus
+            total_score = max(5, min(95, raw_score * regime_multiplier))
             
-            if price > vwap > 0:
-                tech_bonus += 1
+            if news['sentiment'] == '🔴 Very Negative': total_score = min(total_score, 35)
+            elif news['sentiment'] == '🟠 Negative': total_score = min(total_score, 55)
             
-            if high > prev_close:
-                tech_bonus += 1
-            
-            if pos > 60:
-                tech_bonus += 1
-            
-            # ===== TOTAL SCORE =====
-            total_score = value_score + momentum_score + smart_score + news['score'] + tech_bonus
-            total_score = max(5, min(95, total_score))
-            
-            # Cap for negative news
-            if news['sentiment'] == '🔴 Very Negative':
-                total_score = min(total_score, 35)
-            elif news['sentiment'] == '🟠 Negative':
-                total_score = min(total_score, 55)
-            
-            # Target based on conviction
+            # PRICE TARGETS
             if total_score >= 80: target_mult = 1.8
             elif total_score >= 65: target_mult = 1.5
             elif total_score >= 50: target_mult = 1.3
             else: target_mult = 1.15
             
-            target = round(price * target_mult, 2)
+            entry_price = price
+            target_price = round(price * target_mult, 2)
             stop_loss = round(price * 0.95, 2)
             
-            # Action
-            if total_score >= 80:
-                action, stars, conf = "💪 STRONG BUY", "⭐⭐⭐⭐⭐", "HIGH"
-            elif total_score >= 65:
-                action, stars, conf = "✅ BUY", "⭐⭐⭐⭐", "GOOD"
-            elif total_score >= 55:
-                action, stars, conf = "📥 ACCUMULATE", "⭐⭐⭐", "MODERATE"
-            elif total_score >= 40:
-                action, stars, conf = "👀 WATCH", "⭐⭐", "LOW"
-            else:
-                action, stars, conf = "❌ SKIP", "⭐", "NONE"
+            # POSITION SIZING
+            capital = 100000  # Default ₹1 Lakh
+            quantity, investment = calculate_position(capital, entry_price, stop_loss)
+            
+            # EXIT STRATEGY
+            exit_plan = get_exit_strategy(total_score, entry_price, target_price)
+            
+            # TRAILING STOP
+            trailing_stop = calculate_trailing_stop(entry_price, entry_price, entry_price, 0)
+            
+            if total_score >= 80: action, stars, conf = "💪 STRONG BUY", "⭐⭐⭐⭐⭐", "HIGH"
+            elif total_score >= 65: action, stars, conf = "✅ BUY", "⭐⭐⭐⭐", "GOOD"
+            elif total_score >= 55: action, stars, conf = "📥 ACCUMULATE", "⭐⭐⭐", "MODERATE"
+            elif total_score >= 40: action, stars, conf = "👀 WATCH", "⭐⭐", "LOW"
+            else: action, stars, conf = "❌ SKIP", "⭐", "NONE"
             
             results.append({
                 'symbol': symbol, 'sector': sector, 'price': price,
                 'score': total_score, 'stars': stars, 'action': action,
-                'target': target, 'stop_loss': stop_loss,
-                'change_pct': change_pct, 'delivery': delivery_info,
-                'news_sentiment': news['sentiment'],
-                'news_crux': news['crux'],
-                'confidence': conf
+                'target': target_price, 'stop_loss': stop_loss,
+                'quantity': quantity, 'investment': investment,
+                'exit_plan': exit_plan, 'trailing_stop': trailing_stop,
+                'delivery': delivery_info, 'news_sentiment': news['sentiment'],
+                'news_crux': news['crux'], 'confidence': conf,
+                'change_pct': change_pct
             })
             
-            print(f"  {symbol:15} ₹{price:>8.0f} | V:{value_score} M:{momentum_score} S:{smart_score} N:{news['score']} = {total_score:>2} | {stars}")
-            time.sleep(0.15)
+            print(f"  {symbol:15} ₹{price:>8.0f} | Score: {total_score:>2} | Qty: {quantity} | {stars}")
+            time.sleep(0.1)
             
         except Exception as e:
             print(f"  {symbol}: ⚠️ {str(e)[:30]}")
@@ -376,71 +416,69 @@ def analyze():
     
     results.sort(key=lambda x: x['score'], reverse=True)
     
-    # ===== BUILD TELEGRAM MESSAGE =====
+    # BUILD MESSAGE
     strong = len([r for r in results if r['score'] >= 80])
     buy = len([r for r in results if 65 <= r['score'] < 80])
     acc = len([r for r in results if 55 <= r['score'] < 65])
-    watch = len([r for r in results if 40 <= r['score'] < 55])
     
-    message = f"📊 <b>MULTI-BAGGER SCANNER</b>\n"
-    message += f"📅 {ist_date} | ⏰ {ist_time} IST\n"
+    message = f"🚀 <b>PRO TRADING SYSTEM v3.0</b>\n"
+    message += f"📅 {day}, {ist_date} | ⏰ {ist_time} IST\n"
+    message += f"📊 Regime: {regime}\n"
     message += f"{'═'*35}\n\n"
     
-    # Market Context
     if market:
-        message += f"🏦 <b>MARKET CONTEXT</b>\n{'─'*35}\n"
+        message += f"🏦 <b>MARKET</b>\n{'─'*35}\n"
         for v in market.values():
             message += f"{v}\n"
         message += "\n"
     
-    # Stats
     message += f"📈 <b>SCREENED: {len(results)} STOCKS</b>\n"
-    message += f"├ 💪 Strong Buy: {strong}\n"
-    message += f"├ ✅ Buy: {buy}\n"
-    message += f"├ 📥 Accumulate: {acc}\n"
-    message += f"└ 👀 Watch: {watch}\n\n"
+    message += f"├ 💪 Strong Buy: {strong} | ✅ Buy: {buy} | 📥 Accumulate: {acc}\n"
+    message += f"└ ⚠️ Regime Adj: {regime_multiplier:.1f}x multiplier applied\n\n"
     
-    # Top 7 Picks
-    message += f"🎯 <b>TOP 7 PICKS</b>\n{'═'*35}\n\n"
+    message += f"🎯 <b>TOP 5 PICKS WITH TRADING PLAN</b>\n{'═'*35}\n\n"
     
-    for i, r in enumerate(results[:7], 1):
+    for i, r in enumerate(results[:5], 1):
         gain = ((r['target'] - r['price']) / r['price']) * 100
-        emoji = "🟢" if r['score'] >= 80 else "🔵" if r['score'] >= 65 else "🟡" if r['score'] >= 55 else "⚪"
+        emoji = "🟢" if r['score'] >= 80 else "🔵" if r['score'] >= 65 else "🟡"
         
-        message += f"{emoji} <b>{i}. {r['symbol']}</b> | {r['sector']}\n"
-        message += f"   💰 ₹{r['price']:.0f} → 🎯 ₹{r['target']:.0f} (+{gain:.0f}%) | {r['stars']}\n"
-        message += f"   📊 Score: {r['score']}/100 | {r['action']} | {r['confidence']} confidence\n"
-        message += f"   📦 {r['delivery']}\n"
-        message += f"   📰 {r['news_sentiment']}\n"
+        message += f"{emoji} <b>#{i} {r['symbol']}</b> | {r['sector']}\n"
+        message += f"{'─'*35}\n"
+        message += f"📊 <b>Score:</b> {r['score']}/100 | {r['stars']} | {r['action']}\n\n"
         
+        message += f"💰 <b>TRADE SETUP:</b>\n"
+        message += f"   Entry: ₹{r['price']:.2f}\n"
+        message += f"   Target: ₹{r['target']:.2f} (+{gain:.0f}%)\n"
+        message += f"   Stop Loss: ₹{r['stop_loss']:.2f} (-5%)\n\n"
+        
+        message += f"📦 <b>POSITION:</b>\n"
+        message += f"   Quantity: {r['quantity']} shares\n"
+        message += f"   Investment: ₹{r['investment']:,.0f}\n"
+        message += f"   Max Risk: ₹{r['quantity'] * (r['price'] - r['stop_loss']):,.0f}\n\n"
+        
+        message += f"🚪 <b>EXIT PLAN:</b>\n"
+        message += f"   {r['exit_plan']['first_exit']}\n"
+        message += f"   {r['exit_plan']['second_exit']}\n"
+        if 'final_exit' in r['exit_plan']:
+            message += f"   {r['exit_plan']['final_exit']}\n"
+        message += f"   Stop: {r['exit_plan']['stop']}\n\n"
+        
+        message += f"📰 <b>NEWS:</b> {r['news_sentiment']} | 📦 {r['delivery']}\n"
         if r['news_crux']:
             for crux in r['news_crux'][:2]:
                 message += f"   {crux}\n"
-        
-        message += f"   🛑 Stop: ₹{r['stop_loss']:.0f}\n\n"
+        message += "\n"
     
-    # Sector Leaders
-    message += f"🔥 <b>SECTOR RANKING</b>\n{'─'*35}\n"
-    sec_scores = {}
-    for r in results:
-        s = r['sector']
-        if s not in sec_scores: sec_scores[s] = []
-        sec_scores[s].append(r['score'])
-    
-    for sec, scores in sorted(sec_scores.items(), key=lambda x: sum(x[1])/len(x[1]), reverse=True)[:5]:
-        avg = sum(scores) / len(scores)
-        bar = "█" * int(avg/10) + "░" * (10 - int(avg/10))
-        message += f"{bar} {sec}: {avg:.0f}/100\n"
-    
-    message += f"\n{'═'*35}\n"
-    message += f"🎯 <i>Strong Buy (80+): Full position | Buy (65+): Half position</i>\n"
-    message += f"⚠️ <i>5% stop loss mandatory | Book at target</i>"
+    message += f"{'═'*35}\n"
+    message += f"⚠️ <i>Paper trade first. Start small. Strict stop loss.</i>\n"
+    message += f"🎯 <i>Win rate target: 65%+ | Risk:Reward: 1:3+</i>"
     
     send_telegram(message)
     
-    print(f"\n✅ Analysis complete!")
-    print(f"🏆 Top Pick: {results[0]['symbol']} ({results[0]['score']}/100)")
-    print(f"📊 Distribution: 🟢{strong} 🔵{buy} 🟡{acc} ⚪{watch}")
+    print(f"\n✅ PRO Analysis Complete!")
+    print(f"🏆 #1: {results[0]['symbol']} | Score: {results[0]['score']}/100")
+    print(f"📊 Qty: {results[0]['quantity']} shares | Invest: ₹{results[0]['investment']:,.0f}")
+    print(f"📊 🟢{strong} 🔵{buy} 🟡{acc}")
 
 if __name__ == "__main__":
     analyze()
