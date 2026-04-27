@@ -366,7 +366,14 @@ def analyze():
             
             # TOTAL SCORE (adjusted by market regime)
             raw_score = value_score + momentum_score + smart_score + news['score'] + tech_bonus
-            total_score = round(max(5, min(95, raw_score * regime_multiplier)),1)
+            
+            # Better score distribution with base calibration
+            raw_score = raw_score + 12  # Boost for realistic range
+            
+            if regime_multiplier < 0.6:  # Only reduce in bear markets
+                total_score = round(max(10, min(95, raw_score * regime_multiplier)), 1)
+            else:
+                total_score = round(max(10, min(95, raw_score)), 1)
             
             if news['sentiment'] == '🔴 Very Negative': total_score = min(total_score, 35)
             elif news['sentiment'] == '🟠 Negative': total_score = min(total_score, 55)
