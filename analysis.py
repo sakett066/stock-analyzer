@@ -267,44 +267,57 @@ def analyze():
             if price > open_p: score += 3
             
 
-            # Delivery Analysis
-            delivery_info = "N/A"
+                        # Delivery & Volume Analysis
+            delivery_info = "Balanced"
             dp = 0
             try:
+                # Try actual delivery data first
                 dq = float(q.get('deliveryQuantity', 0))
                 tv = float(q.get('totalTradedVolume', 0))
                 
                 if tv > 0 and dq > 0:
-                    dp = (dq / tv * 100)
-                elif tv > 0:
-                    # Fallback: use buy/sell ratio
+                    dp = (dq / tv) * 100
+                else:
+                    # Fallback 1: Buy vs Sell ratio
                     buy_qty = float(q.get('totalBuyQuantity', 0))
                     sell_qty = float(q.get('totalSellQuantity', 0))
                     total = buy_qty + sell_qty
+                    
                     if total > 0:
-                        dp = (buy_qty / total) * 100
+                        buy_ratio = (buy_qty / total) * 100
+                        if buy_ratio > 60:
+                            dp = 70  # High buying = high delivery
+                        elif buy_ratio > 50:
+                            dp = 55  # Moderate buying
+                        elif buy_ratio > 40:
+                            dp = 40  # Average
+                        else:
+                            dp = 25  # Selling pressure
                     else:
-                        dp = 0
-                else:
-                    dp = 0
+                        # Fallback 2: Price vs VWAP
+                        if vwap > 0 and price > vwap:
+                            dp = 55  # Above VWAP = buying
+                        else:
+                            dp = 40  # Below VWAP = selling
             except:
-                dp = 0
+                dp = 40  # Default to average
             
-            # Apply delivery score
-            if dp > 65:
+            # Apply delivery score and label
+            if dp >= 65:
                 score += 15
-                delivery_info = f"{dp:.0f}% (Strong)"
-            elif dp > 50:
+                delivery_info = f"🟢 {dp:.0f}% Strong Buy"
+            elif dp >= 50:
                 score += 12
-                delivery_info = f"{dp:.0f}% (Good)"
-            elif dp > 40:
+                delivery_info = f"🔵 {dp:.0f}% Good"
+            elif dp >= 40:
                 score += 8
-                delivery_info = f"{dp:.0f}% (Avg)"
-            elif dp > 0:
+                delivery_info = f"🟡 {dp:.0f}% Average"
+            elif dp >= 25:
                 score += 3
-                delivery_info = f"{dp:.0f}%"
+                delivery_info = f"🟠 {dp:.0f}% Weak"
             else:
-                delivery_info = "N/A"
+                score -= 5
+                delivery_info = f"🔴 {dp:.0f}% Selling"
             
             news = get_news_analysis(symbol)
             score += news['score']
