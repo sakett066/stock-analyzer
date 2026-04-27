@@ -11,6 +11,9 @@ from datetime import datetime
 import re
 from xml.etree import ElementTree
 
+# Set India Timezone
+os.environ['TZ'] = 'Asia/Kolkata'
+
 # ============================================
 # CONFIGURATION
 # ============================================
