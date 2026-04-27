@@ -113,39 +113,43 @@ def calculate_trailing_stop(entry, current, highest, stage):
 # EXIT STRATEGY
 # ============================================
 def get_exit_strategy(score, entry, target):
-    """Generate exit plan"""
-    strategies = {
-        80: {
-            'first_exit': 'Book 30% at +25%',
-            'second_exit': 'Book 40% at +50%',
-            'final_exit': 'Trail 25% on remaining',
-            'stop': 'Initial -5%, then trail'
-        },
-        65: {
-            'first_exit': 'Book 40% at +20%',
-            'second_exit': 'Book 40% at +40%',
-            'final_exit': 'Exit balance at +60%',
-            'stop': 'Initial -5%, breakeven at +8%'
-        },
-        55: {
-            'first_exit': 'Book 50% at +15%',
-            'second_exit': 'Exit balance at +25%',
-            'final_exit': 'N/A',
-            'stop': 'Strict -4% stop loss'
-        },
-        40: {
-            'first_exit': 'Exit 100% at +10%',
-            'second_exit': 'N/A',
-            'final_exit': 'N/A',
-            'stop': 'Strict -3% stop loss'
+    """Generate exit plan with actual prices"""
+    
+    if score >= 80:
+        return {
+            'first': f"Book 30% at ₹{entry * 1.25:.0f} (+25%)",
+            'second': f"Book 40% at ₹{entry * 1.50:.0f} (+50%)",
+            'final': f"Trail 25% on remaining above ₹{entry * 1.50:.0f}",
+            'stop': f"Initial SL ₹{entry * 0.95:.0f} (-5%), Trail after +10%"
         }
-    }
-    
-    for threshold, strategy in strategies.items():
-        if score >= threshold:
-            return strategy
-    
-    return strategies[40]
+    elif score >= 65:
+        return {
+            'first': f"Book 40% at ₹{entry * 1.20:.0f} (+20%)",
+            'second': f"Book 40% at ₹{entry * 1.40:.0f} (+40%)",
+            'final': f"Hold balance till ₹{entry * 1.60:.0f} (+60%)",
+            'stop': f"SL ₹{entry * 0.95:.0f} (-5%), Breakeven at +8%"
+        }
+    elif score >= 55:
+        return {
+            'first': f"Book 50% at ₹{entry * 1.15:.0f} (+15%)",
+            'second': f"Exit balance at ₹{entry * 1.25:.0f} (+25%)",
+            'final': f"Re-enter above ₹{entry * 1.30:.0f}",
+            'stop': f"Strict SL ₹{entry * 0.96:.0f} (-4%)"
+        }
+    elif score >= 40:
+        return {
+            'first': f"Exit 100% at ₹{entry * 1.10:.0f} (+10%)",
+            'second': f"Re-enter if breaks ₹{entry * 1.15:.0f}",
+            'final': f"Wait for score >55",
+            'stop': f"Strict SL ₹{entry * 0.97:.0f} (-3%)"
+        }
+    else:
+        return {
+            'first': f"SKIP - Score too low ({score:.1f})",
+            'second': "Wait for better setup",
+            'final': "Check next analysis",
+            'stop': "Do not trade"
+        }
 
 # ============================================
 # MARKET CONTEXT
@@ -362,7 +366,7 @@ def analyze():
             
             # TOTAL SCORE (adjusted by market regime)
             raw_score = value_score + momentum_score + smart_score + news['score'] + tech_bonus
-            total_score = max(5, min(95, raw_score * regime_multiplier))
+            total_score = round(max(5, min(95, raw_score * regime_multiplier)),1)
             
             if news['sentiment'] == '🔴 Very Negative': total_score = min(total_score, 35)
             elif news['sentiment'] == '🟠 Negative': total_score = min(total_score, 55)
@@ -374,12 +378,14 @@ def analyze():
             else: target_mult = 1.15
             
             entry_price = price
-            target_price = round(price * target_mult, 2)
-            stop_loss = round(price * 0.95, 2)
+            target_price = round(price * target_mult, 0)  # Round to whole number
+            stop_loss = round(price * 0.95, 0)  # Round to whole number
             
             # POSITION SIZING
             capital = 100000  # Default ₹1 Lakh
             quantity, investment = calculate_position(capital, entry_price, stop_loss)
+            quantity = max(1, quantity)  # Minimum 1 share
+            investment = quantity * entry_price
             
             # EXIT STRATEGY
             exit_plan = get_exit_strategy(total_score, entry_price, target_price)
@@ -404,7 +410,7 @@ def analyze():
                 'change_pct': change_pct
             })
             
-            print(f"  {symbol:15} ₹{price:>8.0f} | Score: {total_score:>2} | Qty: {quantity} | {stars}")
+            print(f"  {symbol:15} ₹{price:>8.0f} | Score: {total_score:>5.1f} | Qty: {quantity:>4} | {stars}")
             time.sleep(0.1)
             
         except Exception as e:
@@ -420,6 +426,7 @@ def analyze():
     strong = len([r for r in results if r['score'] >= 80])
     buy = len([r for r in results if 65 <= r['score'] < 80])
     acc = len([r for r in results if 55 <= r['score'] < 65])
+    skip = len([r for r in results if r['score'] < 40])
     
     message = f"🚀 <b>PRO TRADING SYSTEM v3.0</b>\n"
     message += f"📅 {day}, {ist_date} | ⏰ {ist_time} IST\n"
@@ -457,11 +464,10 @@ def analyze():
         message += f"   Max Risk: ₹{r['quantity'] * (r['price'] - r['stop_loss']):,.0f}\n\n"
         
         message += f"🚪 <b>EXIT PLAN:</b>\n"
-        message += f"   {r['exit_plan']['first_exit']}\n"
-        message += f"   {r['exit_plan']['second_exit']}\n"
-        if 'final_exit' in r['exit_plan']:
-            message += f"   {r['exit_plan']['final_exit']}\n"
-        message += f"   Stop: {r['exit_plan']['stop']}\n\n"
+        message += f"   1️⃣ {r['exit_plan']['first']}\n"
+        message += f"   2️⃣ {r['exit_plan']['second']}\n"
+        message += f"   3️⃣ {r['exit_plan']['final']}\n"
+        message += f"   🛑 {r['exit_plan']['stop']}\n\n"  
         
         message += f"📰 <b>NEWS:</b> {r['news_sentiment']} | 📦 {r['delivery']}\n"
         if r['news_crux']:
