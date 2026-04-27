@@ -266,17 +266,45 @@ def analyze():
             if price > vwap > 0: score += 5
             if price > open_p: score += 3
             
-            # Delivery
+
+            # Delivery Analysis
             delivery_info = "N/A"
+            dp = 0
             try:
                 dq = float(q.get('deliveryQuantity', 0))
-                tv = float(q.get('totalTradedVolume', 1))
-                dp = (dq / tv * 100) if tv > 0 else 0
-                if dp > 65: score += 15; delivery_info = f"{dp:.0f}% (Strong)"
-                elif dp > 50: score += 12; delivery_info = f"{dp:.0f}% (Good)"
-                elif dp > 40: score += 8; delivery_info = f"{dp:.0f}% (Avg)"
-                else: delivery_info = f"{dp:.0f}%"
-            except: pass
+                tv = float(q.get('totalTradedVolume', 0))
+                
+                if tv > 0 and dq > 0:
+                    dp = (dq / tv * 100)
+                elif tv > 0:
+                    # Fallback: use buy/sell ratio
+                    buy_qty = float(q.get('totalBuyQuantity', 0))
+                    sell_qty = float(q.get('totalSellQuantity', 0))
+                    total = buy_qty + sell_qty
+                    if total > 0:
+                        dp = (buy_qty / total) * 100
+                    else:
+                        dp = 0
+                else:
+                    dp = 0
+            except:
+                dp = 0
+            
+            # Apply delivery score
+            if dp > 65:
+                score += 15
+                delivery_info = f"{dp:.0f}% (Strong)"
+            elif dp > 50:
+                score += 12
+                delivery_info = f"{dp:.0f}% (Good)"
+            elif dp > 40:
+                score += 8
+                delivery_info = f"{dp:.0f}% (Avg)"
+            elif dp > 0:
+                score += 3
+                delivery_info = f"{dp:.0f}%"
+            else:
+                delivery_info = "N/A"
             
             news = get_news_analysis(symbol)
             score += news['score']
