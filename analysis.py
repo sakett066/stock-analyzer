@@ -5,8 +5,8 @@
 ██╔═══╝ ██╔══██╗██║   ██║       ██║   ██╔══██╗██╔══██║██║  ██║██╔══╝  ██╔══██╗
 ██║     ██║  ██║╚██████╔╝       ██║   ██║  ██║██║  ██║██████╔╝███████╗██║  ██║
 ╚═╝     ╚═╝  ╚═╝ ╚═════╝        ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝
-PROFESSIONAL TRADING SYSTEM v3.0
-Entry + Exit + Position Sizing + Trailing Stop + Market Regime + Backtest
+PROFESSIONAL TRADING SYSTEM v4.0
+Entry + Exit + Position Sizing + Trailing Stop + Market Regime + Risk Detection
 """
 import os
 import time
@@ -48,7 +48,6 @@ def get_market_regime():
         price = float(q.get('lastPrice', 0))
         weekly = q.get('weekHighLow', {})
         high_52 = float(weekly.get('max', 0))
-        low_52 = float(weekly.get('min', 0))
         
         if high_52 > 0:
             dist_from_high = ((high_52 - price) / high_52) * 100
@@ -81,7 +80,6 @@ def calculate_position(capital, entry, stop_loss, risk_percent=2):
     quantity = int(risk_amount / risk_per_share)
     investment = quantity * entry
     
-    # Max 20% in one stock
     max_investment = capital * 0.20
     if investment > max_investment:
         quantity = int(max_investment / entry)
@@ -97,17 +95,17 @@ def calculate_trailing_stop(entry, current, highest, stage):
     profit_pct = ((current - entry) / entry) * 100
     
     if profit_pct < 5:
-        return entry * 0.95  # Initial stop: -5%
+        return entry * 0.95
     elif profit_pct < 10:
-        return entry  # Breakeven
+        return entry
     elif profit_pct < 20:
-        return current * 0.95  # Trail 5%
+        return current * 0.95
     elif profit_pct < 35:
-        return current * 0.92  # Trail 8%
+        return current * 0.92
     elif profit_pct < 50:
-        return current * 0.90  # Trail 10%
+        return current * 0.90
     else:
-        return current * 0.85  # Trail 15% (let it run)
+        return current * 0.85
 
 # ============================================
 # EXIT STRATEGY
@@ -150,6 +148,68 @@ def get_exit_strategy(score, entry, target):
             'final': "Check next analysis",
             'stop': "Do not trade"
         }
+
+# ============================================
+# RISK DETECTION (FDA, Regulatory, Fraud)
+# ============================================
+def detect_risk_events(symbol):
+    """Detect high-risk events: FDA recalls, fraud, regulatory action"""
+    risk_flags = []
+    risk_score = 0
+    
+    try:
+        risk_queries = [
+            f"{symbol} FDA recall drug quality",
+            f"{symbol} SEBI investigation fraud penalty",
+            f"{symbol} regulatory fine ban arrest"
+        ]
+        
+        for query in risk_queries[:2]:
+            try:
+                url = f"https://news.google.com/rss/search?q={query}&hl=en-IN&gl=IN&ceid=IN:en"
+                resp = requests.get(url, timeout=5)
+                root = ElementTree.fromstring(resp.content)
+                
+                for item in root.findall('.//item')[:5]:
+                    title = item.find('title').text if item.find('title') is not None else ""
+                    title_lower = title.lower()
+                    
+                    if any(w in title_lower for w in ['recall', 'fda', 'warning letter', 'quality issue']):
+                        risk_flags.append(f"🚨 FDA/RECALL: {title[:100]}")
+                        risk_score += 25
+                    
+                    if any(w in title_lower for w in ['fraud', 'scam', 'investigation', 'sebi', 'cbi', 'ed']):
+                        risk_flags.append(f"⚠️ INVESTIGATION: {title[:100]}")
+                        risk_score += 20
+                    
+                    if any(w in title_lower for w in ['penalty', 'fine', 'ban', 'suspended']):
+                        risk_flags.append(f"💰 PENALTY: {title[:100]}")
+                        risk_score += 15
+                    
+                    if any(w in title_lower for w in ['resign', 'arrest', 'raid', 'ceo']):
+                        risk_flags.append(f"👤 MANAGEMENT: {title[:100]}")
+                        risk_score += 20
+                    
+                    if any(w in title_lower for w in ['debt', 'default', 'bankruptcy', 'insolvency']):
+                        risk_flags.append(f"💸 FINANCIAL: {title[:100]}")
+                        risk_score += 15
+            except:
+                pass
+    except:
+        pass
+    
+    risk_score = min(100, risk_score)
+    
+    if risk_score >= 40:
+        risk_level = '🔴 HIGH RISK'
+    elif risk_score >= 20:
+        risk_level = '🟠 MEDIUM RISK'
+    elif risk_score >= 10:
+        risk_level = '🟡 LOW RISK'
+    else:
+        risk_level = '🟢 CLEAN'
+    
+    return {'flags': risk_flags[:3], 'score': risk_score, 'level': risk_level}
 
 # ============================================
 # MARKET CONTEXT
@@ -276,19 +336,17 @@ def analyze():
     day = now.strftime('%A')
     
     print(f"\n{'='*60}")
-    print(f"🚀 PRO TRADING SYSTEM v3.0")
+    print(f"🚀 PRO TRADING SYSTEM v4.0")
     print(f"📅 {day}, {ist_date} | ⏰ {ist_time}")
     print(f"{'='*60}")
     
-    # Market Regime
     regime, regime_multiplier = get_market_regime()
     print(f"📊 Market Regime: {regime} (Multiplier: {regime_multiplier}x)")
     
-    # Market Context
     market = get_market_context()
     
     all_stocks = [(sym, sec) for sec, syms in STOCKS.items() for sym in syms]
-    print(f"🔄 Analyzing {len(all_stocks)} stocks...\n")
+    print(f"🔄 Analyzing {len(all_stocks)} stocks with Risk Detection...\n")
     
     for symbol, sector in all_stocks:
         try:
@@ -359,24 +417,33 @@ def analyze():
             
             news = get_news_analysis(symbol)
             
+            # RISK DETECTION
+            risk = detect_risk_events(symbol)
+            
             tech_bonus = 0
             if price > open_price and open_price > prev_close: tech_bonus += 2
             if price > vwap > 0: tech_bonus += 1
             if pos > 60: tech_bonus += 2
             
-            # TOTAL SCORE (adjusted by market regime)
+            # TOTAL SCORE
             raw_score = value_score + momentum_score + smart_score + news['score'] + tech_bonus
+            raw_score = raw_score + 12
             
-            # Better score distribution with base calibration
-            raw_score = raw_score + 12  # Boost for realistic range
-            
-            if regime_multiplier < 0.6:  # Only reduce in bear markets
+            if regime_multiplier < 0.6:
                 total_score = round(max(10, min(95, raw_score * regime_multiplier)), 1)
             else:
                 total_score = round(max(10, min(95, raw_score)), 1)
             
+            # News sentiment caps
             if news['sentiment'] == '🔴 Very Negative': total_score = min(total_score, 35)
             elif news['sentiment'] == '🟠 Negative': total_score = min(total_score, 55)
+            
+            # RISK PENALTY
+            if risk['score'] >= 40:
+                total_score = min(total_score, 45)
+            elif risk['score'] >= 20:
+                total_score = min(total_score, 65)
+                total_score = total_score - 10
             
             # PRICE TARGETS
             if total_score >= 80: target_mult = 1.8
@@ -385,19 +452,15 @@ def analyze():
             else: target_mult = 1.15
             
             entry_price = price
-            target_price = round(price * target_mult, 0)  # Round to whole number
-            stop_loss = round(price * 0.95, 0)  # Round to whole number
+            target_price = round(price * target_mult, 0)
+            stop_loss = round(price * 0.95, 0)
             
-            # POSITION SIZING
-            capital = 100000  # Default ₹1 Lakh
+            capital = 100000
             quantity, investment = calculate_position(capital, entry_price, stop_loss)
-            quantity = max(1, quantity)  # Minimum 1 share
+            quantity = max(1, quantity)
             investment = quantity * entry_price
             
-            # EXIT STRATEGY
             exit_plan = get_exit_strategy(total_score, entry_price, target_price)
-            
-            # TRAILING STOP
             trailing_stop = calculate_trailing_stop(entry_price, entry_price, entry_price, 0)
             
             if total_score >= 80: action, stars, conf = "💪 STRONG BUY", "⭐⭐⭐⭐⭐", "HIGH"
@@ -414,10 +477,12 @@ def analyze():
                 'exit_plan': exit_plan, 'trailing_stop': trailing_stop,
                 'delivery': delivery_info, 'news_sentiment': news['sentiment'],
                 'news_crux': news['crux'], 'confidence': conf,
-                'change_pct': change_pct
+                'change_pct': change_pct,
+                'risk_level': risk['level'], 'risk_flags': risk['flags']
             })
             
-            print(f"  {symbol:15} ₹{price:>8.0f} | Score: {total_score:>5.1f} | Qty: {quantity:>4} | {stars}")
+            risk_tag = f"⚠️{risk['level']}" if risk['score'] >= 20 else ""
+            print(f"  {symbol:15} ₹{price:>8.0f} | Score: {total_score:>5.1f} | Qty: {quantity:>4} | {stars} {risk_tag}")
             time.sleep(0.1)
             
         except Exception as e:
@@ -429,13 +494,12 @@ def analyze():
     
     results.sort(key=lambda x: x['score'], reverse=True)
     
-    # BUILD MESSAGE
     strong = len([r for r in results if r['score'] >= 80])
     buy = len([r for r in results if 65 <= r['score'] < 80])
     acc = len([r for r in results if 55 <= r['score'] < 65])
-    skip = len([r for r in results if r['score'] < 40])
+    risky = len([r for r in results if r['risk_level'] in ['🔴 HIGH RISK', '🟠 MEDIUM RISK']])
     
-    message = f"🚀 <b>PRO TRADING SYSTEM v3.0</b>\n"
+    message = f"🚀 <b>PRO TRADING SYSTEM v4.0</b>\n"
     message += f"📅 {day}, {ist_date} | ⏰ {ist_time} IST\n"
     message += f"📊 Regime: {regime}\n"
     message += f"{'═'*35}\n\n"
@@ -448,7 +512,10 @@ def analyze():
     
     message += f"📈 <b>SCREENED: {len(results)} STOCKS</b>\n"
     message += f"├ 💪 Strong Buy: {strong} | ✅ Buy: {buy} | 📥 Accumulate: {acc}\n"
-    message += f"└ ⚠️ Regime Adj: {regime_multiplier:.1f}x multiplier applied\n\n"
+    if risky > 0:
+        message += f"└ 🚨 Risk Flags: {risky} stocks\n\n"
+    else:
+        message += f"└ 🛡️ All Clean\n\n"
     
     message += f"🎯 <b>TOP 5 PICKS WITH TRADING PLAN</b>\n{'═'*35}\n\n"
     
@@ -458,9 +525,12 @@ def analyze():
         
         message += f"{emoji} <b>#{i} {r['symbol']}</b> | {r['sector']}\n"
         message += f"{'─'*35}\n"
-        message += f"📊 <b>Score:</b> {r['score']}/100 | {r['stars']} | {r['action']}\n\n"
+        message += f"📊 <b>Score:</b> {r['score']}/100 | {r['stars']} | {r['action']}\n"
         
-        message += f"💰 <b>TRADE SETUP:</b>\n"
+        if r['risk_level'] != '🟢 CLEAN':
+            message += f"🛡️ <b>Risk:</b> {r['risk_level']}\n"
+        
+        message += f"\n💰 <b>TRADE SETUP:</b>\n"
         message += f"   Entry: ₹{r['price']:.2f}\n"
         message += f"   Target: ₹{r['target']:.2f} (+{gain:.0f}%)\n"
         message += f"   Stop Loss: ₹{r['stop_loss']:.2f} (-5%)\n\n"
@@ -474,7 +544,13 @@ def analyze():
         message += f"   1️⃣ {r['exit_plan']['first']}\n"
         message += f"   2️⃣ {r['exit_plan']['second']}\n"
         message += f"   3️⃣ {r['exit_plan']['final']}\n"
-        message += f"   🛑 {r['exit_plan']['stop']}\n\n"  
+        message += f"   🛑 {r['exit_plan']['stop']}\n\n"
+        
+        if r['risk_flags']:
+            message += f"🚨 <b>RISK ALERTS:</b>\n"
+            for flag in r['risk_flags'][:2]:
+                message += f"   {flag}\n"
+            message += "\n"
         
         message += f"📰 <b>NEWS:</b> {r['news_sentiment']} | 📦 {r['delivery']}\n"
         if r['news_crux']:
@@ -484,14 +560,14 @@ def analyze():
     
     message += f"{'═'*35}\n"
     message += f"⚠️ <i>Paper trade first. Start small. Strict stop loss.</i>\n"
-    message += f"🎯 <i>Win rate target: 65%+ | Risk:Reward: 1:3+</i>"
+    message += f"🛡️ <i>Risk detection active - FDA/Regulatory/Fraud flags</i>"
     
     send_telegram(message)
     
     print(f"\n✅ PRO Analysis Complete!")
     print(f"🏆 #1: {results[0]['symbol']} | Score: {results[0]['score']}/100")
     print(f"📊 Qty: {results[0]['quantity']} shares | Invest: ₹{results[0]['investment']:,.0f}")
-    print(f"📊 🟢{strong} 🔵{buy} 🟡{acc}")
+    print(f"📊 🟢{strong} 🔵{buy} 🟡{acc} 🚨{risky}")
 
 if __name__ == "__main__":
     analyze()
