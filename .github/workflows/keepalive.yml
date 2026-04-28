@@ -1,0 +1,20 @@
+name: Keep Alive
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Keep repo active
+        run: |
+          echo "Active: $(date)" > status.txt
+          git config user.name "Bot"
+          git config user.email "bot@github.com"
+          git add status.txt
+          git commit -m "Keep alive $(date +%Y%m%d)" || true
+          git push || true
