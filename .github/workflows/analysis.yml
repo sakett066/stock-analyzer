@@ -2,10 +2,14 @@ name: Stock Analysis
 
 on:
   schedule:
-    - cron: '55 3 * * 1-5'
-    - cron: '25 6 * * 1-5'
-    - cron: '25 8 * * 1-5'
-    - cron: '40 9 * * 1-5'
+    # 9:30 AM IST → Schedule 5 hours early
+    - cron: '30 22 * * 0-4'
+    # 12:00 PM IST → Schedule 5 hours early
+    - cron: '0 1 * * 1-5'
+    # 2:00 PM IST → Schedule 5 hours early
+    - cron: '0 3 * * 1-5'
+    # 3:15 PM IST → Schedule 5 hours early
+    - cron: '15 4 * * 1-5'
   workflow_dispatch:
 
 jobs:
