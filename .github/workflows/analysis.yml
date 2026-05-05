@@ -2,14 +2,14 @@ name: Stock Analysis
 
 on:
   schedule:
-    # Morning 9:25 AM - Avg delay 3h 42m → Schedule 5:43 UTC
-    - cron: '43 5 * * 0-4'
-    # Midday 12:00 PM - Avg delay 2h 27m → Schedule 3:33 UTC
-    - cron: '33 3 * * 1-5'
-    # Afternoon 2:00 PM - Avg delay 1h 20m → Schedule 6:40 UTC
-    - cron: '40 6 * * 1-5'
-    # Closing 3:15 PM - Avg delay 35m → Schedule 8:40 UTC
-    - cron: '40 8 * * 1-5'
+    # 9:25 AM IST → 8 hours early = 1:25 AM UTC previous day
+    - cron: '25 1 * * 0-4'
+    # 12:00 PM IST → 8 hours early = 4:00 AM UTC
+    - cron: '0 4 * * 0-4'
+    # 2:00 PM IST → 8 hours early = 6:00 AM UTC
+    - cron: '0 6 * * 0-4'
+    # 3:15 PM IST → 8 hours early = 7:15 AM UTC
+    - cron: '15 7 * * 0-4'
   workflow_dispatch:
 
 jobs:
